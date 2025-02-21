@@ -41,8 +41,9 @@ const receivePayload = (payload, receive) =>
 
 const store = createMergeableStore();
 
+// receive function is exported to golang
 let receive;
-// send function is defined in golang
+// send function is set in golang
 
 const synchronizer = createCustomSynchronizer(
   store,
@@ -61,4 +62,11 @@ const synchronizer = createCustomSynchronizer(
   undefined,
   undefined
 );
-synchronizer.startSync().then(() => console.log('syncing'));
+// try to load existing state (set from golang)
+synchronizer
+  .startSync(persisted ? jsonParse(persisted) : undefined)
+  .then(() => {
+    // onChange is set from golang
+    this.store.addTablesListener((s) => setPersisted(s.getJson()));
+    this.store.addValuesListener((s) => setPersisted(s.getJson()));
+  });

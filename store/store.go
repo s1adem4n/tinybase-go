@@ -2,7 +2,7 @@ package store
 
 import (
 	"embed"
-	"fmt"
+	"sync"
 
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/console"
@@ -19,13 +19,12 @@ var EncodingPolyfill string
 var Script string
 
 type Store struct {
-	vm   *goja.Runtime
-	Send func(string)
+	vm      *goja.Runtime
+	receive func(string)
+	mu      sync.Mutex
 }
 
-func New(
-	send func(string),
-) *Store {
+func New() *Store {
 	vm := goja.New()
 
 	registry := require.NewRegistry(require.WithLoader(func(filename string) ([]byte, error) {
@@ -35,23 +34,30 @@ func New(
 	console.Enable(vm)
 
 	return &Store{
-		vm:   vm,
-		Send: send,
+		vm: vm,
 	}
 }
 
 func (s *Store) Receive(payload string) {
-	s.vm.RunString(fmt.Sprintf("receive(%q)", payload))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.receive(payload)
 }
 
-func (s *Store) Initialize() error {
+func (s *Store) Initialize(send func(string), persisted string, setPersisted func(string)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	// Load encoding API polyfill
 	_, err := s.vm.RunString(EncodingPolyfill)
 	if err != nil {
 		return err
 	}
 
-	s.vm.Set("send", s.Send)
+	s.vm.Set("send", send)
+	s.vm.Set("persisted", persisted)
+	s.vm.Set("setPersisted", setPersisted)
 
 	// Now you can require a module (assuming you have a module "myModule.js" in the current directory)
 	_, err = s.vm.RunString(Script)
@@ -59,13 +65,10 @@ func (s *Store) Initialize() error {
 		return err
 	}
 
-	return nil
-}
-
-func (s *Store) GetJSON() (string, error) {
-	val, err := s.vm.RunString("store.getJson()")
+	err = s.vm.ExportTo(s.vm.Get("receive"), &s.receive)
 	if err != nil {
-		return "", err
+		return err
 	}
-	return val.String(), nil
+
+	return nil
 }
